@@ -1,0 +1,952 @@
+    
+section	.rodata			; we define (global) read-only variables in .rodata section
+	format_string: db "%s",0; format string
+	format_hex_num: db "%02X" , 0
+	format_hex_num_first_dig: db "%X" , 0
+	format_hex_num_new_line: db "%X" ,10 ,0
+    format_num: db "%d" , 10, 0; 
+	
+	error_empty : db "Error: Insufficient Number of Arguments on Stack" ,10 ,0
+	error_full : db "Error: Operand Stack Overflow" ,10 ,0
+	error_power : db "wrong Y value",10 ,0
+	
+	calc:  db "calc:" ,0
+	size EQU 5 ; size fo the stack
+	
+	new_line: db 10,0
+	
+	
+section	.data			
+    buffp: dd 0     ; pointer to the array
+    counter: dd 0   ; will count the size of the array
+    curr_ad: dd 0   ; the addres to insert the link
+    stack_counter : dd 0 ; to move in the stack
+    print_counter : dd 0 ; to know how many parameters we insert into the stack to know how much to print
+    action_counter: dd 0 ; count the action in the program
+    aux: db 0
+    debug: db 0
+    last : dd 0 ; flag for leading_zeros
+section .bss			; we define (global) uninitialized variables in .bss section
+	stack: resb size*4		;  the size of the stack * the address
+    buff: resb 81        ; buffer that contains the input
+    
+section .text
+    align 16
+     global main 
+     extern printf 
+     extern fflush
+     extern malloc 
+     extern calloc 
+     extern free 
+     extern gets 
+     extern fgets
+     extern stdin
+     extern stderr
+
+    %macro free_pointer 1 ; %1 = pointer to free
+        mov ebx , %1
+        free_loop:
+            mov ecx, ebx    
+            inc ebx         
+            mov ebx, [ebx]
+
+            push ebx
+            push ecx
+            call free
+            add esp, 4
+            pop ebx
+            
+            cmp ebx, 0 
+            jnz free_loop
+    %endmacro
+    
+    %macro print 2 ; %1 = output , %2 = format.
+        push %1
+        push %2
+        call printf
+        add esp,8
+        
+     %endmacro
+     
+     
+     
+     %macro func_start 0
+        push ebp
+        mov ebp, esp
+        sub esp,4
+        pushad
+    %endmacro
+    
+    %macro func_end 0
+        popad
+      ;  mov eax,[ebp-4]
+        add esp,4
+        mov esp, ebp	
+        pop ebp
+        ret
+    %endmacro
+    
+    
+     
+main:
+	push ebp
+	mov ebp, esp
+	sub esp,4
+	pushad
+     ;   mov edx, [esp+4] ; argv
+     ;   mov edx , [edx]
+     ;   mov ecx , [edx]
+     ;   cmp ecx , '-'
+     ;   jnz start
+	;inc edx
+;	mov ecx , [edx] 
+;	cmp ecx , 'd'
+   ;     jnz start
+  ;      mov byte [debug] , 1
+	start:
+            call myCalc
+	
+	
+	push eax
+	push format_hex_num_new_line
+	call printf
+	add esp,8
+	
+    popad
+	add esp,4
+	mov esp, ebp	
+	pop ebp
+	ret
+
+
+	
+myCalc:
+	push ebp
+	mov ebp, esp
+	sub esp,4
+	pushad
+
+	
+	get_input:
+	print calc , format_string
+        push buff
+        call gets          ;get user input into buf
+        add esp,4
+        
+        mov ecx ,[stack_counter]
+        shl ecx ,2 ; mult 4
+        add ecx ,stack      ;points to the stack ad
+        mov dword [curr_ad] , ecx ; insert the addres of the stack position in to the curr_ad
+        
+	; after getting the input check first if it is an operator otherwise its a number
+        cmp byte [buff], '+'
+        jz plus_la
+        
+        cmp byte [buff], 'q'
+        jz quit
+        
+        cmp byte [buff], 'p'
+        jz popandprint
+        
+        cmp byte [buff], 'd'
+        jz duplicate
+        
+        cmp byte [buff], '^'
+        jz power
+        
+        cmp byte [buff], 'v'
+        jz power_neg
+        
+        cmp byte [buff], 'n'
+        jz n
+        
+        clean_num:
+            push buff
+            call number_convert
+            add esp,4
+            jmp get_input
+        
+        
+	
+	
+	plus_la:
+        inc dword [action_counter]
+        cmp dword [stack_counter] , 2        ; check if adding is valid
+        jge plus_ok
+        print error_empty , format_string    ; print error
+        jmp get_input               
+        
+        plus_ok:                             ; adding is valid, call plus function
+        call plus
+        jmp get_input
+	
+	popandprint:
+        inc dword [action_counter] 
+        call check_pop
+        cmp  eax,0
+        jnz get_input
+        
+        call pop_and_print
+        
+        call free_link
+        
+        jmp get_input
+	
+        
+    quit:    
+        
+    popad
+    mov eax,[action_counter]
+	add esp,4
+	mov esp, ebp	
+	pop ebp
+	ret
+	
+	number_convert:
+        func_start
+        call check_push
+        cmp eax,1
+        je end_convert
+        
+        mov dword [counter],0
+        
+        mov edx , [ebp+8]
+        size_array:
+        .loop:
+            cmp byte [edx] , 0 ; reach 0 
+            jz lab
+            inc edx 
+            inc dword [counter]
+            jmp .loop
+            
+        
+        lab:
+            mov ebx, [counter]
+            dec edx
+            
+        convert: ; convert pairs into hexa.
+
+
+                
+                mov ecx, 0 
+        
+                mov cl, [edx]   
+            
+                cmp cl, 65          ; check if it is a letter
+                jge letters           
+                
+                sub cl, '0'         ; if its a number. 
+                jmp next_cell
+            
+            letters:
+                sub cl, 'A'
+                add cl,10
+                
+            next_cell:
+                dec edx              ; pointer to the buff array.
+                dec ebx              ; counter.
+                
+            cmp ebx, 0               ; the number is odd, a lone number ):
+            jz insert
+            
+                mov eax, 0
+                mov al, [edx]
+                cmp al, 'A'          ; check if it is a letter
+                jge letters2
+            
+            
+                sub al, '0'         ; if its a number.
+                jmp num2 
+                
+            letters2:
+                sub al, 'A'
+                add al,10
+                
+            num2:
+                shl al, 4           ; convert to decimal.
+        
+                add cl, al     ; edx contains the hexa of the pairs. 
+            
+                dec edx
+                dec ebx
+                
+            insert: 
+                push edx
+                push ecx
+                push ebx
+                push 5
+                call malloc
+                add esp, 4
+                pop ebx
+                pop ecx
+                pop edx
+                
+            
+                mov byte [eax], cl     ;put the data in the link.
+                
+                mov dword [eax+1] , 0 ;put null in the "next" link.
+                mov ecx ,[curr_ad]
+                mov dword [ecx], eax  ; insert the link in to the stack
+                inc eax
+                mov dword [curr_ad],eax ; move to the next link
+                
+            
+                cmp ebx, 0 ; if there is another number to insert in to the list.
+                jnz convert
+                
+                inc dword [stack_counter]
+        end_convert:
+            func_end
+	
+    operators:
+        
+    exit: 
+     
+    plus:
+        func_start
+        mov byte [aux] , 0
+        mov ecx ,[stack_counter]    ;   ecx is the first operand of the addition.
+        dec ecx
+        shl ecx ,2 ; mult 4
+        add ecx ,stack     
+        mov ecx, [ecx]
+        
+        mov edx ,[stack_counter]    ; edx is the second operand of the addition.
+        dec edx                     ; to get to the second operand
+        dec edx
+       
+        shl edx ,2 ; mult 4
+        add edx ,stack      
+        mov edx, [edx]
+        
+        add:
+            mov eax , 0
+            mov ebx , 0
+            mov al , [ecx]
+            mov bl , [edx]
+            add al , [aux]        ; add the carry from last iter
+            mov byte [aux] , 0    ; reset the carry
+            
+            jnc no_carryl    
+            mov byte [aux] , 1
+            
+            no_carryl:
+            add bl , al           ; list1.data + list2.data
+            
+            jnc no_carry
+            mov byte [aux] , 1    ; if there was a carry.
+            
+            no_carry:
+            mov [edx] , bl        ; put the result in the new data.
+
+            ;mov al ,byte [edx]   ; a test
+            inc ecx
+            inc edx
+            
+            mov ecx, [ecx]        ; ecx = list1.next.
+
+            cmp dword ecx, 0      ; if list1 = null.
+            jz check_carry        ; uses the memory of the second operand, so only 1 needs to be free'd
+
+            
+            cmp dword [edx] , 0     ; if (list2 = null && list1 != null) .
+            jz carry_link         
+
+            mov edx, [edx]        ; edx = edx.next.
+            jmp add               ; else continue.
+            
+            carry_link:
+                cmp byte [aux] , 0
+                jnz check_ecx_carry
+                push ecx
+                push edx
+                push 5
+                call malloc         ; create new link for the link of the 1st operand
+                add esp, 4
+                pop edx
+                pop ecx
+                
+                
+                mov ecx, [ecx]          ; ecx = list1.next
+                mov ebx, 0
+                mov bl , [ecx]          ; bl = list1.next.data
+ 
+                
+                mov byte [eax], bl      ; put the data in the link.
+                mov dword [eax + 1] , 0 ; put null in the "next" link.
+                mov [edx], eax
+                jmp free_call
+                
+            check_ecx_carry:   
+                push ecx
+                push edx
+                push 5
+                call malloc         ; create new link for the link of the 1st operand
+                add esp, 4
+                pop edx
+                pop ecx
+
+                mov [edx] , eax
+                mov edx , [edx]     ; edx points to the new empty link
+                mov dword [edx + 1] , 0
+                
+                mov eax , 0
+                mov ebx , 0
+                mov al , [ecx]          ; al = ecx.data
+                mov bl , [aux]          ; bl = carry
+                mov byte [aux] , 0
+                add al , bl
+                jnc cno_carry
+                mov byte [aux] , 1
+                
+                cno_carry:
+                    mov [edx] , al      ; edx.data = data
+                    inc edx
+                    inc ecx
+                    mov ecx , [ecx]     ; next link to add
+                    cmp ecx , 0
+                    je check_carry
+                    cmp byte [aux] , 0
+                    jnz check_ecx_carry
+                    jmp free_call
+                    
+                
+            check_carry:
+                cmp byte [aux], 0
+                je free_call            ; there is no carry.
+                
+                mov ebx , 0
+                mov ecx , 0
+                mov bl , [aux]           ; bl = carry         
+                mov byte [aux] , 0
+                cmp dword [edx] , 0              ; if edx has no more data
+                je edx_zero
+                
+                mov edx, [edx]
+                mov cl , [edx]           ; cl = edx.data
+                
+                add bl , cl              ; bl = edx.data + carry
+                jnc no_carryc
+                mov byte [aux] , 1
+                
+                no_carryc:
+                    mov byte [edx], bl     ;put the data in the link.
+                    inc edx
+                    jmp check_carry
+                
+                edx_zero:
+                    push ecx
+                    push edx
+                    push 5
+                    call malloc              ; create new link for the carry.
+                    add esp, 4
+                    pop edx
+                    pop ecx
+            
+                    mov byte [eax], bl     ;put the data in the link.
+                    mov [edx], eax
+                    inc edx             ; get to edx.next
+                    mov edx , [edx]
+                
+                jmp check_carry
+                
+            free_call:
+                call free_link
+                func_end
+        
+ ;   quit:
+    
+    pop_and_print:
+        func_start
+    
+        ;mov ebx, [print_counter]
+        ; stack +4*counter = to move in the stack
+
+       
+       mov ecx ,[stack_counter]
+        dec ecx
+        shl ecx ,2 ; mult 4
+        add ecx ,stack      ;points to the stack ad
+        mov ecx, [ecx]      ; points to the link ad
+        pop_to_stack:
+            mov edx , 0
+            mov dl ,[ecx]    ; dl holds the value of the link
+            push edx         ; push the value of the link in to the stack
+            inc dword [print_counter] 
+            mov ecx,[ecx+1] ; curr =curr.next
+            ;inc ecx     ; move to the next link
+            cmp dword ecx, 0 ; reach to the end of the list
+            jnz pop_to_stack
+         
+        ; change  
+        print_num:
+            check_if_zero:
+                
+                pop ecx ; insert the value from the assembly stack
+                dec dword [print_counter]
+                cmp dword [print_counter] , 0
+                jz print_first_num
+                cmp ecx , 0 ; if its 0 skip it
+                jz check_if_zero
+            print_first_num:
+                push ecx ; insert a value who is not 0 
+                push dword format_hex_num_first_dig 
+                call printf
+                add esp,8
+                cmp dword [print_counter], 0
+                jz end_print
+                
+            printing:
+                push dword format_hex_num 
+                call printf
+                add esp,8
+                dec dword [print_counter]
+                jnz printing
+                
+            
+        end_print:
+                push new_line
+                call printf
+                add esp,4
+       ; end change
+             
+       func_end
+       
+    duplicate:
+         cmp dword [stack_counter] ,5
+         jnz cont_n
+         push error_full
+         push format_string
+         call printf
+         add esp ,8
+         jmp end_d
+        cont_n:
+        call duplicate_func
+       end_d:
+        inc dword [action_counter]
+       jmp get_input
+        
+    power:
+        inc dword [action_counter]
+        call powerP
+        jmp get_input
+        
+    power_neg:
+        inc dword [action_counter]
+        call powerN
+        jmp get_input
+
+    n:
+        inc dword [action_counter]
+        call check_pop 
+        cmp eax , 0
+        jnz get_input
+        call num_of_ones
+        jmp get_input
+    
+	;mov ecx, dword [ebp+8]	; get function argument (pointer to string)
+
+	
+	
+    popad
+    add esp ,4
+    mov esp , ebp
+    pop ebp
+    ret
+    
+    
+    push_one:
+        func_start
+        push 5
+        call malloc          ; create a link for the counter
+        add esp, 4
+
+        mov ecx ,[stack_counter]  
+        shl ecx ,2 ; mult 4
+        add ecx ,stack      
+        
+        mov byte [eax], 1     ;put the data in the link.
+                
+        mov dword [eax+1] , 0 ;put null in the "next" link.
+        mov dword [ecx], eax  ; insert the link into the stack
+        inc dword [stack_counter]
+        func_end
+        
+    push_zero:
+        func_start
+        push 5
+        call malloc          ; create a link for the counter
+        add esp, 4
+
+        mov ecx ,[stack_counter]  
+        shl ecx ,2 ; mult 4
+        add ecx ,stack      
+        
+        mov byte [eax], 0     ;put the data in the link.
+                
+        mov dword [eax+1] , 0 ;put null in the "next" link.
+        mov dword [ecx], eax  ; insert the link in to the stack
+        inc dword [stack_counter]
+        func_end
+    
+    
+    num_of_ones:
+        func_start
+        
+        mov ecx ,[stack_counter]  
+        dec ecx            
+        shl ecx ,2 ; mult 4
+        add ecx ,stack     
+        dec dword [stack_counter]       ; the number poped from the stack
+        mov ecx , [ecx]                 ; ecx points to the linked list
+        mov edx , ecx                   ; so we can free
+        
+        mov eax , [stack_counter]
+        inc eax
+        cmp eax , size                  ; check if there is enough space to push 1's to the stack
+        mov ebx , 0
+        jle enough_space
+        
+        mov ebx , [stack_counter]
+        dec ebx
+        shl ebx , 2
+        add ebx, stack
+        mov dword [curr_ad] , ebx
+        mov ebx , [ebx]
+        
+        
+        enough_space:
+            push edx
+            push ecx
+            push ebx
+            call push_zero
+            pop ebx
+            pop ecx
+            pop edx
+
+        
+        num_loop:
+            mov byte [aux] , 0       ; counter to know how many shif to do 
+            mov eax , [edx]     ; edx is the number data
+            
+            ones_loop: ; do shifr for all the links
+                shr eax , 1
+                jnc no_one ; add 1 to the aux if there is a carry
+                ;***** check if there is enough space*****
+               ; theres a carry and add the ones 
+               is_enter:
+               pushad
+                call push_one
+                call plus
+                popad
+                
+                no_one:
+                inc byte [aux]
+                cmp byte [aux] , 4 ; finshed check link
+                jnz ones_loop
+                
+            ; check if it isnt the last link
+            inc edx ; points to next
+            mov edx, [edx] ; points to data
+            cmp edx , 0
+            jnz num_loop
+            
+            
+        push_stack_up:
+            cmp ebx , 0
+            jz n_end
+            mov eax , [curr_ad]         ; the addres to place the number we took out
+            mov edx , [eax]             ; edx holds the number we want to push up
+            inc eax                     ; the addres to place the number (push)
+            mov [eax] , edx             ; place the number 
+            dec eax                     ; go back to the place where we want to replace the number we took out
+            mov [eax] , ebx             ; place the number
+                
+            
+            
+        n_end:
+            free_pointer ecx
+        
+        
+        func_end
+    
+    
+        
+    
+        
+    free_link: ; free
+        func_start
+        
+        dec dword [stack_counter]
+        mov ecx ,[stack_counter]    ;   ecx is the first operand of the addition.
+        shl ecx ,2 ; mult 4
+        add ecx ,stack
+        mov ecx, [ecx]
+        mov ebx, ecx
+       loop:
+            mov ecx, ebx    ; when you free you need to hold the pointer to the next link
+            inc ebx         ; cause if you delete that pointer its gone.
+            mov ebx, [ebx]
+
+            push ebx
+            push ecx
+            call free
+            add esp, 4
+            pop ebx
+            
+            cmp ebx, 0 
+            jnz loop
+        
+        func_end
+        
+	
+	
+	
+	check_pop: ; check if i can pop or not and print errors
+        push ebp
+        mov ebp, esp
+        sub esp ,4 
+        pushad
+        
+        cmp dword [stack_counter] , 0
+        jnz not_empty
+       
+       Error_stack_empty:
+            print error_empty , format_string
+            
+            mov dword [ebp-4] , 1 
+            jmp end_func_empty
+       
+        not_empty:
+        mov dword [ebp-4] , 0
+        
+        end_func_empty:
+        popad
+        mov eax , [ebp-4] ; the return value
+        add esp ,4
+        mov esp , ebp
+        pop ebp
+        ret
+        
+        
+        
+        
+    check_push: ; check if pop is valid or not and print errors
+        push ebp
+        mov ebp, esp
+        sub esp ,4 
+        pushad
+        
+        mov ebx, size 
+        cmp dword [stack_counter] , ebx
+        jnz not_full
+       
+       Error_stack_full:
+            print error_full , format_string
+            
+            mov dword [ebp-4] , 1 
+            jmp end_func_full
+       
+        not_full:
+        mov dword [ebp-4] , 0
+        end_func_full:
+        popad
+        mov eax , [ebp-4] ; the return value
+        add esp ,4
+        mov esp , ebp
+        pop ebp
+        ret
+        
+        
+         powerN: ; ebp-4 = x , ebp-8 =y
+       
+            func_start
+            
+            mov ebx, 0 
+            ; contains x - linked list (pointer to 8)
+            mov edx ,[stack_counter] 
+            dec edx
+            shl edx ,2 ; mult 4
+            add edx ,stack      ;points to the stack ad
+            mov edx, [edx]      ; points to the link ad
+            
+            ; contains y - link , becuase y<200
+            mov ecx ,[stack_counter] 
+            dec ecx
+            dec ecx
+            shl ecx ,2 ; mult 4
+            add ecx ,stack      ;points to the stack ad
+            mov ecx, [ecx]      ; points to the link ad
+            ;change
+            cmp dword [ecx+1] , 0 ;if y is not one link - print error
+            jnz print_error
+            cmp dword [ecx] , 200
+            jge print_error
+            
+            good_power:
+            mov ecx ,[ecx] ; y.data (2)
+            mov eax , edx
+            
+            cmp ecx , 0 ; in case the power is 0 
+            jz free_l1
+        
+                myLoop:
+                shr byte [edx] , 1 ; [edx] the first data of the first link
+                mov ebx , edx ; save pre
+                mov edx , [edx+1] ; go to the next link 
+                cmp edx ,0
+                jz only_oneL
+            myloop2:
+                shr byte [edx] , 1 ; [edx] the first data of the first link
+                jnc no_carry1 
+            plus_128:
+                add byte [ebx] ,128
+            no_carry1:
+                mov ebx , edx ; save pre
+                mov edx , [edx+1] ; go to the next link
+                cmp edx ,0
+                jnz myloop2
+            only_oneL:
+                mov edx , eax
+                loop myLoop ,ecx
+           
+           free_l1: 
+                dec dword [stack_counter]
+                
+                pushad
+                call free_link
+                popad
+                
+                mov ecx ,[stack_counter]
+                shl ecx ,2 ; mult 4
+                add ecx ,stack      ;points to the stack ad
+                mov ebx , ecx
+                mov [ecx] , edx
+                 
+                inc dword [stack_counter]
+                add ebx ,4
+                mov ebx , 0 
+                
+                jmp end_power
+                
+            print_error:
+            push error_power
+            push format_string
+            call printf
+            add esp ,8 
+            
+        end_power:
+            
+           func_end
+       ;end change
+       
+       
+        powerP: ; ebp-4 = x , ebp-8 =y
+       
+            func_start
+            
+            mov ebx, 0 
+            ; contains x - linked list (pointer to 8)
+            mov edx ,[stack_counter] 
+            dec edx
+            shl edx ,2 ; mult 4
+            add edx ,stack      ;points to the stack ad
+            mov edx, [edx]      ; points to the link ad
+        
+            
+            ; contains y - link , becuase y<200
+            mov ecx ,[stack_counter] 
+            dec ecx
+            dec ecx
+            shl ecx ,2 ; mult 4
+            add ecx ,stack      ;points to the stack ad
+            mov ecx, [ecx]      ; points to the link ad
+            
+            ;change
+            cmp dword [ecx+1] , 0 ;if y is not one link - print error
+            jnz print_error1
+            cmp dword [ecx] , 200
+            jge print_error1
+            
+        good_power1:
+            mov ecx ,[ecx] ; y.data (2)
+            
+            cmp ecx , 0 ; in case the power is 0 
+            jz free_l
+            power_loop:
+                pushad
+                call duplicate_func
+                call plus
+                popad
+                loop power_loop ,ecx
+            free_l:
+                dec dword [stack_counter]
+                
+                pushad
+                call free_link
+                popad
+                
+                mov ecx ,[stack_counter]
+                shl ecx ,2 ; mult 4
+                add ecx ,stack      ;points to the stack ad
+                mov ebx , ecx
+                mov [ecx] , edx
+                 
+                inc dword [stack_counter]
+                add ebx ,4
+                mov ebx , 0 
+                
+                jmp end_power
+                
+          print_error1:
+            push error_power
+            push format_string
+            call printf
+            add esp ,8 
+           ;end change
+           func_end
+           
+           
+           
+           
+    duplicate_func:
+        func_start
+    
+        mov ecx ,[stack_counter]  ; the number
+        dec ecx
+        shl ecx ,2 ; mult 4
+        add ecx ,stack     
+        mov ecx, [ecx]
+        
+        mov edx ,[stack_counter]  ; the duplicate
+        shl edx ,2 ; mult 4
+        add edx ,stack     
+        duplicate_loop:
+            push edx
+            push ecx
+            push 5
+            call malloc
+            add esp, 4
+            pop ecx
+            pop edx
+            
+            mov [edx], eax      ; put the malloc of the list in the stack
+            mov edx,[edx]       ; edx point to the list
+            mov eax, 0          
+            mov al, [ecx]       ; al = ecx.data
+            mov [edx], al       ; duplicate.data = ecx.data
+            
+            inc edx
+            inc ecx
+            mov ecx , [ecx]
+            cmp ecx , 0
+            jnz duplicate_loop 
+
+	inc dword [stack_counter]	    
+	func_end
+   
+    end_code:
+
+        
+	
+	

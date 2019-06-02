@@ -1,4 +1,5 @@
 # calculator-project-assembly-
+A 'Computer Architecture' course assignment
 creating a RPN calculator.
 Operations are performed as is standard for an RPN calculator: any input number is pushed onto an operand stack. 
 Each operation is performed on operands which are popped from the operand stack.
